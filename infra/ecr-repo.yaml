@@ -1,0 +1,40 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Private ECR repository for the Flask containerization lab,
+  with vulnerability scanning, least-privilege repo policy,
+  and a GitHub OIDC role for CI/CD image pushes.
+
+Resources:
+  FlaskLabRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: thierry-flask-lab
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      Tags:
+        - Key: Project
+          Value: PushDockerImageToECR
+        - Key: Owner
+          Value: Thierry
+        - Key: Environment
+          Value: Lab
+
+  GitHubActionsECRRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: github-actions-ecr-push-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: arn:aws:iam::711387109786:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub: repo:thierry0011/md4-Push-Docker-Image-to-ECR:*
