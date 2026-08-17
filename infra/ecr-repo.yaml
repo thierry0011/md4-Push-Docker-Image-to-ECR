@@ -1,19 +1,113 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Private ECR repository for the Flask containerization lab,
-  with vulnerability scanning, least-privilege repo policy,
-  and a GitHub OIDC role for CI/CD image pushes.
+  Private ECR repository for the containerization lab, with vulnerability
+  scanning, lifecycle policy, a repository policy restricted to the CI role,
+  and a GitHub OIDC IAM role scoped to least-privilege ECR push permissions.
+
+Parameters:
+  RepositoryName:
+    Type: String
+    Default: thierry-flask-lab
+    Description: Name of the private ECR repository.
+
+  GitHubOrg:
+    Type: String
+    Default: thierry0011
+    Description: GitHub organization or username that owns the repo.
+
+  GitHubRepo:
+    Type: String
+    Default: md4-Push-Docker-Image-to-ECR
+    Description: GitHub repository name (used to scope the OIDC trust policy).
+
+  GitHubBranch:
+    Type: String
+    Default: '*'
+    Description: >
+      Branch allowed to assume the role (e.g. 'main'). Default '*' allows any
+      branch/tag/PR in the repo, matching the workflow's trigger on every push.
+
+  RoleName:
+    Type: String
+    Default: github-actions-ecr-push-role
+    Description: Name of the IAM role assumed by GitHub Actions via OIDC.
+
+  CreateOIDCProvider:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: >
+      Set to 'true' only if the token.actions.githubusercontent.com OIDC provider
+      does not already exist in this AWS account (an account can have only one
+      provider per URL, so leave this 'false' if it was already created).
+
+Conditions:
+  RestrictToBranch: !Not [!Equals [!Ref GitHubBranch, '*']]
+  ShouldCreateOIDCProvider: !Equals [!Ref CreateOIDCProvider, 'true']
 
 Resources:
-  FlaskLabRepository:
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: ShouldCreateOIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        # GitHub rotates its TLS cert; AWS also trusts the chain via ClientIdList, so this is a stable fallback.
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+
+  AppRepository:
     Type: AWS::ECR::Repository
     Properties:
-      RepositoryName: thierry-flask-lab
-      ImageTagMutability: IMMUTABLE
+      RepositoryName: !Ref RepositoryName
+      ImageTagMutability: MUTABLE # the lab's fixed "yourfullname_appname" tag is reused on every push
       ImageScanningConfiguration:
         ScanOnPush: true
       EncryptionConfiguration:
         EncryptionType: AES256
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Expire untagged images after 7 days",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": 7
+                },
+                "action": { "type": "expire" }
+              },
+              {
+                "rulePriority": 2,
+                "description": "Keep only the most recent 20 images overall",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 20
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+      RepositoryPolicyText:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCIRolePushPull
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt GitHubActionsECRRole.Arn
+            Action:
+              - ecr:BatchCheckLayerAvailability
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchGetImage
+              - ecr:PutImage
+              - ecr:InitiateLayerUpload
+              - ecr:UploadLayerPart
+              - ecr:CompleteLayerUpload
       Tags:
         - Key: Project
           Value: PushDockerImageToECR
@@ -25,16 +119,63 @@ Resources:
   GitHubActionsECRRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: github-actions-ecr-push-role
+      RoleName: !Ref RoleName
+      Description: Least-privilege role assumed by GitHub Actions (via OIDC) to push images to the app's ECR repo only.
+      MaxSessionDuration: 3600
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
           - Effect: Allow
             Principal:
-              Federated: arn:aws:iam::711387109786:oidc-provider/token.actions.githubusercontent.com
+              # Fn::If lets this safely reference GitHubOIDCProvider only when this stack creates it,
+              # otherwise it points at the provider ARN that already exists in the account.
+              Federated: !If
+                - ShouldCreateOIDCProvider
+                - !Ref GitHubOIDCProvider
+                - !Sub arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
             Action: sts:AssumeRoleWithWebIdentity
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
               StringLike:
-                token.actions.githubusercontent.com:sub: repo:thierry0011/md4-Push-Docker-Image-to-ECR:*
+                token.actions.githubusercontent.com:sub: !If
+                  - RestrictToBranch
+                  - !Sub repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/${GitHubBranch}
+                  - !Sub repo:${GitHubOrg}/${GitHubRepo}:*
+      Policies:
+        - PolicyName: ECRPushScopedToRepo
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # ECR requires the auth-token action to be granted on "*" - it has no resource-level permissions.
+              - Sid: ECRAuth
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: '*'
+              - Sid: ECRPushToThisRepoOnly
+                Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:PutImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                Resource: !GetAtt AppRepository.Arn
+      Tags:
+        - Key: Project
+          Value: PushDockerImageToECR
+
+Outputs:
+  RepositoryUri:
+    Description: URI of the private ECR repository (use for docker tag/push).
+    Value: !GetAtt AppRepository.RepositoryUri
+
+  RepositoryArn:
+    Description: ARN of the private ECR repository.
+    Value: !GetAtt AppRepository.Arn
+
+  GitHubActionsRoleArn:
+    Description: ARN to put in the GitHub Actions workflow's role-to-assume input.
+    Value: !GetAtt GitHubActionsECRRole.Arn

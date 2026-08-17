@@ -1,0 +1,67 @@
+name: Build and Push Docker Image to ECR
+
+# Runs on every push to any branch, as required by the lab.
+on:
+  push:
+    branches:
+      - '**'
+
+# Least privilege at the workflow level: read the repo, and mint an OIDC token.
+# No AWS access keys/secrets are used anywhere in this workflow.
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: thierry-flask-lab
+  # ARN of the IAM role created by infra/ecr-repo.yaml (GitHubActionsECRRole output).
+  AWS_ROLE_ARN: arn:aws:iam::711387109786:role/github-actions-ecr-push-role
+  IMAGE_TAG: thierrykwizera_flaskapp
+
+jobs:
+  build-and-push:
+    name: Build, tag, and push image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build Docker image
+        env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+        run: |
+          set -euo pipefail
+          docker build \
+            --tag "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
+            --tag "$REGISTRY/$ECR_REPOSITORY:${{ github.sha }}" \
+            .
+
+      - name: Push image to Amazon ECR
+        env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+        run: |
+          set -euo pipefail
+          docker push "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          docker push "$REGISTRY/$ECR_REPOSITORY:${{ github.sha }}"
+
+      - name: Summary
+        if: success()
+        env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+        run: |
+          echo "### Image pushed" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`$REGISTRY/$ECR_REPOSITORY:${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
