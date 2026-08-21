@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   Private ECR repository for the containerization lab, with vulnerability
-  scanning, lifecycle policy, a repository policy restricted to the CI role,
-  and a GitHub OIDC IAM role scoped to least-privilege ECR push permissions.
+  scanning, a lifecycle policy, and a GitHub OIDC IAM role scoped to
+  least-privilege ECR push permissions on this repository only.
 
 Parameters:
   RepositoryName:
@@ -151,26 +151,6 @@ Resources:
       Tags:
         - Key: Project
           Value: PushDockerImageToECR
-
-  AppRepositoryPolicy:
-    Type: AWS::ECR::RepositoryPolicy
-    Properties:
-      RepositoryName: !Ref AppRepository
-      PolicyText:
-        Version: '2012-10-17'
-        Statement:
-          - Sid: AllowCIRolePushPull
-            Effect: Allow
-            Principal:
-              AWS: !GetAtt GitHubActionsECRRole.Arn
-            Action:
-              - ecr:BatchCheckLayerAvailability
-              - ecr:GetDownloadUrlForLayer
-              - ecr:BatchGetImage
-              - ecr:PutImage
-              - ecr:InitiateLayerUpload
-              - ecr:UploadLayerPart
-              - ecr:CompleteLayerUpload
 
 Outputs:
   RepositoryUri:
