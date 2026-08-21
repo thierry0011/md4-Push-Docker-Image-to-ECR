@@ -123,10 +123,12 @@ Resources:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
               StringLike:
+                # Trailing "*" after org/repo tolerates the "@<immutable-id>" suffix GitHub
+                # appends to the sub claim once a username or repository has been renamed.
                 token.actions.githubusercontent.com:sub: !If
                   - RestrictToBranch
-                  - !Sub repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/${GitHubBranch}
-                  - !Sub repo:${GitHubOrg}/${GitHubRepo}:*
+                  - !Sub repo:${GitHubOrg}*/${GitHubRepo}*:ref:refs/heads/${GitHubBranch}
+                  - !Sub repo:${GitHubOrg}*/${GitHubRepo}*:*
       Policies:
         - PolicyName: ECRPushScopedToRepo
           PolicyDocument:
