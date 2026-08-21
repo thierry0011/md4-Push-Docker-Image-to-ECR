@@ -93,21 +93,6 @@ Resources:
               }
             ]
           }
-      RepositoryPolicyText:
-        Version: '2012-10-17'
-        Statement:
-          - Sid: AllowCIRolePushPull
-            Effect: Allow
-            Principal:
-              AWS: !GetAtt GitHubActionsECRRole.Arn
-            Action:
-              - ecr:BatchCheckLayerAvailability
-              - ecr:GetDownloadUrlForLayer
-              - ecr:BatchGetImage
-              - ecr:PutImage
-              - ecr:InitiateLayerUpload
-              - ecr:UploadLayerPart
-              - ecr:CompleteLayerUpload
       Tags:
         - Key: Project
           Value: PushDockerImageToECR
@@ -166,6 +151,26 @@ Resources:
       Tags:
         - Key: Project
           Value: PushDockerImageToECR
+
+  AppRepositoryPolicy:
+    Type: AWS::ECR::RepositoryPolicy
+    Properties:
+      RepositoryName: !Ref AppRepository
+      PolicyText:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCIRolePushPull
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt GitHubActionsECRRole.Arn
+            Action:
+              - ecr:BatchCheckLayerAvailability
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchGetImage
+              - ecr:PutImage
+              - ecr:InitiateLayerUpload
+              - ecr:UploadLayerPart
+              - ecr:CompleteLayerUpload
 
 Outputs:
   RepositoryUri:
