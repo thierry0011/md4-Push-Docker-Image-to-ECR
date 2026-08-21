@@ -1,5 +1,6 @@
-# 1. Base image (minimal, actively patched)
-FROM python:3.12-slim
+# 1. Base image (minimal, actively patched; musl-based Alpine avoids the
+#    perl/glibc/sqlite3 CVEs that come bundled in Debian-based slim images)
+FROM python:3.12-alpine
 
 # 2. Runtime hygiene
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -10,7 +11,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # 4. Create a non-root user
-RUN useradd --create-home --shell /bin/bash appuser
+RUN adduser -D -h /home/appuser -s /bin/sh appuser
 
 # 5. Copy dependency file first (before app code, for build cache efficiency)
 COPY requirements.txt .
